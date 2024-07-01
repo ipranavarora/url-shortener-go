@@ -7,8 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
 type URL struct {
@@ -49,7 +50,7 @@ func getURL(id string) (URL, error) {
 	return url, nil
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func homeHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Home")
 }
 
@@ -75,7 +76,8 @@ func shortUrlHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func redirectUrlHandler(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/redirect/")
+	vars := mux.Vars(r)
+	id := vars["id"]
 	url, err := getURL(id)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusNotFound)
@@ -85,15 +87,17 @@ func redirectUrlHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	// Register the handler function to handle all requests to the root url ("/")
-	http.HandleFunc("/", handler)
-	http.HandleFunc("/shorten", shortUrlHandler)
-	http.HandleFunc("/redirect/", redirectUrlHandler) // Added the redirect handler
+	r := mux.NewRouter()
 
-	// Start the http server on port 8080
+	// Register the handler functions with their respective routes
+	r.HandleFunc("/", homeHandler).Methods("GET")
+	r.HandleFunc("/shorten", shortUrlHandler).Methods("POST")
+	r.HandleFunc("/redirect/{id}", redirectUrlHandler).Methods("GET")
+
+	// Start the HTTP server on port 8080
 	fmt.Println("Starting the server on port 8080")
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8080", r)
 	if err != nil {
-		fmt.Println("Error on starting server", err)
+		fmt.Println("Error starting server:", err)
 	}
 }
