@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -19,12 +21,11 @@ type URL struct {
 	CreationDate time.Time `json:"creation_date"`
 }
 
-// in-memory database
 var urlDB = make(map[string]URL)
 
 func generateShortUrl(OriginalURL string) string {
 	hasher := md5.New()
-	hasher.Write([]byte(OriginalURL)) // it converts the originalURL into a byte slice
+	hasher.Write([]byte(OriginalURL))
 	data := hasher.Sum(nil)
 	hash := hex.EncodeToString(data)
 	return hash[:8]
@@ -32,7 +33,7 @@ func generateShortUrl(OriginalURL string) string {
 
 func createURL(originalURL string) string {
 	shortUrl := generateShortUrl(originalURL)
-	id := shortUrl // use the shorturl as id for simplicity
+	id := shortUrl
 	urlDB[id] = URL{
 		ID:           id,
 		OriginalURL:  originalURL,
@@ -50,34 +51,58 @@ func getURL(id string) (URL, error) {
 	return url, nil
 }
 
-func homeHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Home")
+func indexHandler(w http.ResponseWriter, r *http.Request) {
+	tmpl, err := template.ParseFiles("templates/index.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	tmpl.Execute(w, nil)
 }
 
 func shortUrlHandler(w http.ResponseWriter, r *http.Request) {
-	var data struct {
-		URL string `json:"url"`
+	var originalURL string
+	if r.Method == http.MethodPost {
+		originalURL = r.FormValue("url")
+	} else {
+		var data struct {
+			URL string `json:"url"`
+		}
+		err := json.NewDecoder(r.Body).Decode(&data)
+		if err != nil {
+			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			return
+		}
+		originalURL = data.URL
 	}
-	err := json.NewDecoder(r.Body).Decode(&data)
-	if err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+
+	shortURL := createURL(originalURL)
+
+	baseURL := fmt.Sprintf("%s://%s", r.URL.Scheme, r.Host)
+
+	if r.Method == http.MethodPost {
+		tmpl, err := template.ParseFiles("templates/index.html")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		tmpl.Execute(w, map[string]string{"ShortURL": shortURL, "BaseURL": baseURL})
 		return
 	}
 
-	shortURL_ := createURL(data.URL)
-
 	response := struct {
 		ShortURL string `json:"short_url"`
+		BaseURL  string `json:"base_url"`
 	}{
-		ShortURL: shortURL_,
+		ShortURL: shortURL,
+		BaseURL:  baseURL,
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
 func redirectUrlHandler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id := vars["id"]
+	id := strings.TrimPrefix(r.URL.Path, "/redirect/")
 	url, err := getURL(id)
 	if err != nil {
 		http.Error(w, "Invalid request", http.StatusNotFound)
@@ -88,13 +113,10 @@ func redirectUrlHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	r := mux.NewRouter()
-
-	// Register the handler functions with their respective routes
-	r.HandleFunc("/", homeHandler).Methods("GET")
-	r.HandleFunc("/shorten", shortUrlHandler).Methods("POST")
+	r.HandleFunc("/", indexHandler).Methods("GET")
+	r.HandleFunc("/shorten", shortUrlHandler).Methods("POST", "GET")
 	r.HandleFunc("/redirect/{id}", redirectUrlHandler).Methods("GET")
 
-	// Start the HTTP server on port 8080
 	fmt.Println("Starting the server on port 8080")
 	err := http.ListenAndServe(":8080", r)
 	if err != nil {
